@@ -413,6 +413,28 @@ def _get_kokoro_submodels_fn_and_export_configs(
     return custom_export_configs, fn_get_submodels
 
 
+def _get_laya_submodels_fn_and_export_configs(
+    model,
+    library_name: str = "laya",
+    task: Optional[str] = None,
+    preprocessors: List = None,
+    custom_export_configs: Dict[str, "OpenVINOConfig"] = None,
+    fn_get_submodels: Callable = None,
+):
+    export_config_constructor = TasksManager.get_exporter_config_constructor(
+        model=model, exporter="openvino", task=task, library_name="laya"
+    )
+    laya_export_config = export_config_constructor(model.config, task=task)
+    custom_export_configs = {"model": laya_export_config}
+
+    def _get_laya_submodels(model):
+        return {"model": model}
+
+    fn_get_submodels = _get_laya_submodels
+
+    return custom_export_configs, fn_get_submodels
+
+
 def _get_qwen3_tts_submodels_fn_and_export_configs(
     model,
     library_name: str = "qwen3_tts",
@@ -816,6 +838,22 @@ def load_preprocessors(
             raise RuntimeError(
                 "Failed to load FunASR Qwen3 tokenizer from subfolder 'Qwen3-0.6B'. "
                 "This tokenizer is required to export OpenVINO tokenizer/detokenizer IR for FunASR."
+            ) from e
+    if model_type == "laya":
+        # Laya checkpoints keep the tokenizer in the `tokenizer/` subfolder, which generic loader
+        # does not pick up. Load it so that the OpenVINO tokenizer/detokenizer IR gets exported
+        # alongside the model and the runtime can rebuild the official system_one API.
+        from transformers import AutoTokenizer, PreTrainedTokenizerBase
+
+        preprocessors = [p for p in preprocessors if not isinstance(p, PreTrainedTokenizerBase)]
+        try:
+            preprocessors.append(
+                AutoTokenizer.from_pretrained(src_name_or_path, subfolder="tokenizer", trust_remote_code=trust_remote_code)
+            )
+        except Exception as e:
+            raise RuntimeError(
+                "Failed to load Laya tokenizer from subfolder 'tokenizer'. "
+                "This tokenizer is required to run inference with a converted Laya model."
             ) from e
     if model_type == "mistral3" and not preprocessors and not subfolder:
         # Checkpoints published in Mistral's own format (e.g. Mistral-Small-3.2-24B-Instruct-2506) ship only

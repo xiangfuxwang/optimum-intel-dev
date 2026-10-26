@@ -202,6 +202,30 @@ def _is_qwen3_tts_model(
         return False
 
 
+def _is_laya_model(
+    model_name_or_path: Union[str, Path],
+    all_files: list,
+    cache_dir: str = HUGGINGFACE_HUB_CACHE,
+    token: Optional[Union[bool, str]] = None,
+) -> bool:
+    """Detect Laya decision models (Convai System 1) by checking for rl_agent_config.json."""
+    if "rl_agent_config.json" not in all_files:
+        return False
+    try:
+        config_path = Path(model_name_or_path)
+        if config_path.is_dir():
+            config_file = config_path / "rl_agent_config.json"
+        else:
+            config_file = hf_hub_download(
+                repo_id=str(model_name_or_path), filename="rl_agent_config.json", cache_dir=cache_dir, token=token
+            )
+        with open(config_file, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        return "encoder" in config and "head_layers" in config
+    except Exception:
+        return False
+
+
 def _infer_library_from_model_name_or_path(
     model_name_or_path: Union[str, Path],
     subfolder: str = "",
@@ -224,6 +248,8 @@ def _infer_library_from_model_name_or_path(
         library_name = "funasr"
     elif _is_qwen3_tts_model(model_name_or_path, all_files, cache_dir=cache_dir, token=token):
         library_name = "qwen3_tts"
+    elif _is_laya_model(model_name_or_path, all_files, cache_dir=cache_dir, token=token):
+        library_name = "laya"
     else:
         library_name = TasksManager._infer_library_from_model_name_or_path(
             model_name_or_path=model_name_or_path, cache_dir=cache_dir
@@ -246,6 +272,8 @@ def _infer_library_from_model_or_model_class(
         library_name = "funasr"
     elif getattr(model, "_qwen3_tts_model", False):
         library_name = "qwen3_tts"
+    elif getattr(model, "_laya_model", False):
+        library_name = "laya"
     elif model.__module__.startswith("optimum"):
         # for wrapped models like timm in optimum.intel.openvino.modeling_timm
         library_name = TasksManager._infer_library_from_model_or_model_class(model=model.model)

@@ -52,6 +52,7 @@ from optimum.exporters.openvino.input_generators import (
     DummyGemma4UnifiedVisionInputGenerator,
     DummyGemma4VisionInputGenerator,
     DummyKokoroInputGenerator,
+    DummyLayaInputGenerator,
     DummyLLavaMultiModalProjectorInputGenerator,
     DummyMiniCPMV4_7LMInputGenerator,
     DummyMiniCPMV4_7VisionInputGenerator,
@@ -348,6 +349,11 @@ def init_model_configs():
             }
         except ImportError:
             pass
+
+    # Laya decision models (Convai System 1): plain PyTorch checkpoints, the loader is bundled in
+    # optimum-intel itself, so no third-party package needs to be importable.
+    if "laya" not in TasksManager._LIBRARY_TO_SUPPORTED_MODEL_TYPES:
+        TasksManager._LIBRARY_TO_SUPPORTED_MODEL_TYPES["laya"] = {}
 
     TasksManager._CUSTOM_CLASSES[("pt", "phi4mm", "image-text-to-text")] = ("transformers", "AutoModelForCausalLM")
     TasksManager._CUSTOM_CLASSES[("pt", "phi4mm", "automatic-speech-recognition")] = (
@@ -8075,6 +8081,56 @@ class KokoroOpenVINOConfig(OpenVINOConfig):
         return {
             "waveform": {0: "batch_size", 1: "audio_length"},
             "phonemes": {0: "batch_size", 1: "phoneme_length"},
+        }
+
+
+@register_in_tasks_manager(
+    "laya",
+    *["feature-extraction"],
+    library_name="laya",
+)
+class LayaOpenVINOConfig(OpenVINOConfig):
+    """Export config for Laya decision models (Convai System 1).
+
+    The model takes a batched token sequence where every answer option is prefixed by a mask-token
+    marker, the positions of these markers, a validity mask for them and the question type id, and
+    returns the option logits and the act head logits.
+    """
+
+    DUMMY_INPUT_GENERATOR_CLASSES = (DummyLayaInputGenerator,)
+    NORMALIZED_CONFIG_CLASS = NormalizedConfig
+
+    def __init__(
+        self,
+        config: "PretrainedConfig",
+        task: str = "feature-extraction",
+        int_dtype: str = "int64",
+        float_dtype: str = "fp32",
+        preprocessors: Optional[List[Any]] = None,
+    ):
+        super().__init__(
+            config=config,
+            task=task,
+            int_dtype=int_dtype,
+            float_dtype=float_dtype,
+            preprocessors=preprocessors,
+        )
+
+    @property
+    def inputs(self) -> Dict[str, Dict[int, str]]:
+        return {
+            "input_ids": {0: "batch_size", 1: "sequence_length"},
+            "attention_mask": {0: "batch_size", 1: "sequence_length"},
+            "marker_pos": {0: "batch_size", 1: "num_options"},
+            "marker_mask": {0: "batch_size", 1: "num_options"},
+            "qtype": {0: "batch_size"},
+        }
+
+    @property
+    def outputs(self) -> Dict[str, Dict[int, str]]:
+        return {
+            "logits": {0: "batch_size", 1: "num_options"},
+            "act_logits": {0: "batch_size"},
         }
 
 

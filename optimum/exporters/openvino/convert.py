@@ -36,6 +36,7 @@ from optimum.exporters.openvino.utils import (
     _get_dynamic_shapes_info,
     _get_input_info,
     _get_kokoro_submodels_fn_and_export_configs,
+    _get_laya_submodels_fn_and_export_configs,
     _get_model_dtype,
     _get_open_clip_submodels_fn_and_export_configs,
     _get_qwen3_tts_submodels_fn_and_export_configs,
@@ -663,6 +664,49 @@ def _save_qwen3_tts_config_and_assets(model, output: Path):
             shutil.copy2(item, dest)
 
 
+def _save_laya_config_and_assets(model, output: Path):
+    """Materialize the original Laya repository files alongside the exported IR.
+
+    The OpenVINO runtime (:class:`optimum.intel.openvino.modeling_laya.OVModelForLayaDecision`)
+    rebuilds the official ``system_one`` API from these files: ``rl_agent_config.json`` holds the
+    inference parameters (temperatures, sequence budgets) and ``tokenizer/`` the Hugging Face
+    tokenizer. Checkpoints are left out since every parameter of the model lives in the exported IR.
+    """
+    import shutil
+
+    repo_id = getattr(model, "_laya_repo_id", None)
+    if repo_id is None:
+        return
+
+    weight_patterns = ("*.safetensors", "*.safetensors.index.json", "*.bin", "*.bin.index.json", "*.pt", "*.pth")
+
+    output = Path(output)
+    src = Path(repo_id)
+    if not src.is_dir():
+        # Resolve the repo into the Hugging Face cache, ignoring the heavy checkpoint files.
+        src = Path(
+            snapshot_download(repo_id=str(repo_id), ignore_patterns=list(weight_patterns))
+        )
+
+    skip_names = {".git", ".gitattributes", ".cache", "openvino_model.xml", "openvino_model.bin"}
+    ignore_weights = shutil.ignore_patterns(*weight_patterns)
+
+    # Exporting a directory onto itself: the assets are already in place.
+    if output.is_dir() and src.resolve() == output.resolve():
+        return
+
+    for item in src.iterdir():
+        if item.name in skip_names or ignore_weights(str(src), [item.name]):
+            continue
+        dest = output / item.name
+        if item.is_dir():
+            shutil.copytree(item, dest, dirs_exist_ok=True, ignore=ignore_weights)
+        else:
+            if dest.resolve() == item.resolve():
+                continue
+            shutil.copy2(item, dest)
+
+
 def _save_sensevoice_config_and_assets(model, output: Path):
     """Save SenseVoiceSmall config.json and the CMVN statistics.
 
@@ -705,7 +749,7 @@ def export_from_model(
         )
 
     library_name = _infer_library_from_model_or_model_class(model)
-    if library_name not in ("open_clip", "kokoro", "qwen3_tts", "funasr"):
+    if library_name not in ("open_clip", "kokoro", "qwen3_tts", "funasr", "laya"):
         TasksManager.standardize_model_attributes(model, library_name=library_name)
 
     if hasattr(model.config, "export_model_type") and model.config.export_model_type is not None:
@@ -725,6 +769,8 @@ def export_from_model(
     else:
         if library_name in ("kokoro", "qwen3_tts"):
             task = "text-to-audio"
+        elif library_name == "laya":
+            task = "feature-extraction"
         else:
             try:
                 task = TasksManager._infer_task_from_model_or_model_class(model=model)
@@ -800,6 +846,12 @@ def export_from_model(
             model, library_name, task, preprocessors, custom_export_configs, fn_get_submodels
         )
 
+    if library_name == "laya":
+        custom_architecture = True
+        custom_export_configs, fn_get_submodels = _get_laya_submodels_fn_and_export_configs(
+            model, library_name, task, preprocessors, custom_export_configs, fn_get_submodels
+        )
+
     if library_name == "qwen3_tts":
         custom_architecture = True
         custom_export_configs, fn_get_submodels = _get_qwen3_tts_submodels_fn_and_export_configs(
@@ -845,6 +897,9 @@ def export_from_model(
         files_subpaths = ["openvino_" + model_name + ".xml" for model_name in models_and_export_configs.keys()]
     elif library_name == "kokoro":
         _save_kokoro_config_and_assets(model, output)
+        files_subpaths = ["openvino_" + model_name + ".xml" for model_name in models_and_export_configs.keys()]
+    elif library_name == "laya":
+        _save_laya_config_and_assets(model, output)
         files_subpaths = ["openvino_" + model_name + ".xml" for model_name in models_and_export_configs.keys()]
     elif library_name == "qwen3_tts":
         _save_qwen3_tts_config_and_assets(model, output)

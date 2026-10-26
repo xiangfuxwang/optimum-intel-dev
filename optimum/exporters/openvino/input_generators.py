@@ -2352,6 +2352,67 @@ class DummyKokoroInputGenerator(DummyInputGenerator):
             raise ValueError(f"Unsupported input {input_name} for DummyKokoroInputGenerator")
 
 
+class DummyLayaInputGenerator(DummyInputGenerator):
+    """Generates dummy inputs for Laya decision models (Convai System 1)."""
+
+    SUPPORTED_INPUT_NAMES = ("input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype")
+
+    def __init__(
+        self,
+        task: str,
+        normalized_config: NormalizedConfig,
+        batch_size: int = DEFAULT_DUMMY_SHAPES["batch_size"],
+        sequence_length: int = DEFAULT_DUMMY_SHAPES["sequence_length"],
+        **kwargs,
+    ):
+        self.task = task
+        self.batch_size = batch_size
+        self.sequence_length = sequence_length
+        # number of answer options kept in the dummy input; must stay >= 2 (top-2 features of the
+        # act head) and reasonably small so the traced head fits any real question
+        self.num_options = 4
+        self.vocab_size = getattr(normalized_config, "vocab_size", 50368)
+
+    def generate(self, input_name: str, framework: str = "pt", int_dtype: str = "int64", float_dtype: str = "fp32"):
+        if input_name == "input_ids":
+            return self.random_int_tensor(
+                shape=[self.batch_size, self.sequence_length],
+                min_value=0,
+                max_value=self.vocab_size - 1,
+                framework=framework,
+                dtype=int_dtype,
+            )
+        elif input_name == "attention_mask":
+            return self.constant_tensor(
+                shape=[self.batch_size, self.sequence_length],
+                framework=framework,
+                value=1,
+                dtype=DTYPE_MAPPER.pt(int_dtype),
+            )
+        elif input_name == "marker_pos":
+            # marker positions must be valid indices into the sequence
+            return self.random_int_tensor(
+                shape=[self.batch_size, self.num_options],
+                min_value=1,
+                max_value=max(2, self.sequence_length - 2),
+                framework=framework,
+                dtype=int_dtype,
+            )
+        elif input_name == "marker_mask":
+            return self.constant_tensor(
+                shape=[self.batch_size, self.num_options],
+                framework=framework,
+                value=1,
+                dtype=DTYPE_MAPPER.pt("bool"),
+            )
+        elif input_name == "qtype":
+            return self.random_int_tensor(
+                shape=[self.batch_size], min_value=0, max_value=2, framework=framework, dtype=int_dtype
+            )
+        else:
+            raise ValueError(f"Unsupported input {input_name} for DummyLayaInputGenerator")
+
+
 class DummyQwen3OmniMoeAudioInputGenerator(DummyInputGenerator):
     SUPPORTED_INPUT_NAMES = ("padded_feature", "padded_mask_after_cnn", "aftercnn_lens", "cu_seqlens")
 

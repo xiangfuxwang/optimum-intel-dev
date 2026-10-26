@@ -95,6 +95,8 @@ def infer_task(
             task = "zero-shot-image-classification"
         elif library_name in ("kokoro", "qwen3_tts"):
             task = "text-to-audio"
+        elif library_name == "laya":
+            task = "feature-extraction"
         elif library_name == "funasr":
             # Use the with-past task so the encoder-decoder export is stateful (KV cache hidden in
             # OpenVINO state). Without the `-with-past` suffix the decoder is exported stateless and
@@ -644,6 +646,18 @@ def main_export(
             model = _OpenClipForZeroShotImageClassification.from_pretrained(model_name_or_path, cache_dir=cache_dir)
         elif library_name == "kokoro":
             model = _KokoroForTextToSpeech.from_pretrained(model_name_or_path, cache_dir=cache_dir, token=token)
+        elif library_name == "laya":
+            from optimum.intel.openvino.modeling_laya import _LayaForDecision
+
+            model = _LayaForDecision.from_pretrained(
+                model_name_or_path,
+                cache_dir=cache_dir,
+                token=token,
+                revision=revision,
+                local_files_only=local_files_only,
+                force_download=force_download,
+                **loading_kwargs,
+            )
         elif library_name == "funasr":
             from optimum.intel.openvino.modeling_funasr import (
                 _FunASRForSpeechSeq2Seq,
@@ -891,6 +905,8 @@ def _main_quantize(
             model_cls_name = _HEAD_TO_AUTOMODELS[task.replace("-with-past", "")]
             if library_name == "sentence_transformers":
                 model_cls_name = "OVSentenceTransformer"
+            elif library_name == "laya":
+                model_cls_name = "OVModelForLayaDecision"
             model_cls = getattr(__import__("optimum.intel", fromlist=[model_cls_name]), model_cls_name)
         except (AttributeError, ImportError, KeyError) as e:
             raise RuntimeError(f"Wasn't able to locate OpenVINO class for task {original_task} ({task}).") from e
